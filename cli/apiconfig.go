@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -48,6 +49,19 @@ type APIConfig struct {
 	TLS       *TLSConfig             `json:"tls,omitempty" yaml:"tls,omitempty" mapstructure:",omitempty"`
 }
 
+// Remove an API from configuration and save to disk.
+func (a APIConfig) Delete() error {
+	// viper does not support key removal, we need to
+	// raw marshall updated configuration
+	filename := getViperConfigFilename()
+	delete(configs, a.name)
+	content, err := json.MarshalIndent(configs, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filename, content, 0644)
+}
+
 // Save the API configuration to disk.
 func (a APIConfig) Save() error {
 	apis.Set(a.name, a)
@@ -81,15 +95,23 @@ type apiConfigs map[string]*APIConfig
 var configs apiConfigs
 var apiCommand *cobra.Command
 
+func getViperConfigFilename() string {
+	return path.Join(viper.GetString("config-directory"), "apis.json")
+}
+
+func getViperConfigDir() string {
+	return viper.GetString("config-directory")
+}
+
 func initAPIConfig() {
 	apis = viper.New()
 
 	apis.SetConfigName("apis")
-	apis.AddConfigPath(viper.GetString("config-directory"))
+	apis.AddConfigPath(getViperConfigDir())
 
 	// Write a blank cache if no file is already there. Later you can use
 	// configs.SaveConfig() to write new values.
-	filename := path.Join(viper.GetString("config-directory"), "apis.json")
+	filename := getViperConfigFilename()
 	if _, err := os.Stat(filename); os.IsNotExist(err) {
 		if err := os.WriteFile(filename, []byte("{}"), 0600); err != nil {
 			panic(err)
@@ -150,6 +172,20 @@ func initAPIConfig() {
 		Long:    "Initializes an API with a short interactive prompt session to set up the base URI and auth if needed.",
 		Args:    cobra.MinimumNArgs(1),
 		Run:     askInitAPIDefault,
+	})
+
+	apiCommand.AddCommand(&cobra.Command{
+		Use:   "delete short-name",
+		Short: "Delete an API",
+		Long:  "Delete an API.",
+		Args:  cobra.MinimumNArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			config := configs[args[0]]
+			if config == nil {
+				panic("API " + args[0] + " not found")
+			}
+			config.Delete()
+		},
 	})
 
 	apiCommand.AddCommand(&cobra.Command{
